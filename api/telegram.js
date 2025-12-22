@@ -3,6 +3,7 @@ import TelegramBot from "node-telegram-bot-api";
 import { askGPT, analyzeDay, transcribeAudio } from "../lib/gpt.js";
 import { dbSaveDay, dbGetByDate } from "../lib/db.js";
 import { createExcelFile } from "../lib/excel.js";
+import { saveObjectsToNotion } from "../lib/notion.js";
 
 export const config = { runtime: "nodejs" };
 
@@ -23,15 +24,18 @@ export default async function handler(req, res) {
 
       const file = await bot.getFile(fileId);
 
-      const downloadUrl =
-        `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${file.file_path}`;
+      const downloadUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${file.file_path}`;
 
       const audio = await fetch(downloadUrl);
       const buffer = Buffer.from(await audio.arrayBuffer());
 
+      // 1) Текст з аудіо
       const text = await transcribeAudio(buffer);
+
+      // 2) JSON-аналіз дня
       const gpt = await analyzeDay(text);
 
+      // 3) Зберегти в БД
       const date = new Date().toISOString().slice(0, 10);
 
       await dbSaveDay({
@@ -42,6 +46,13 @@ export default async function handler(req, res) {
         audio_text: text,
       });
 
+      // 4) Спробувати розпарсити JSON і записати в Notion
+      const objects = parseJsonArraySafe(gpt);
+      if (objects.length > 0) {
+        await saveObjectsToNotion(objects, chatId, text);
+      }
+
+      // 5) Відповідь користувачу
       await bot.sendMessage(chatId, `🎤 Текст:\n${text}\n\n🧠 Аналіз:\n${gpt}`);
 
       return res.send("ok");
@@ -71,12 +82,14 @@ export default async function handler(req, res) {
         return res.send("ok");
       }
 
+      // ---------------- МІЙ ДЕНЬ (текстовий опис) ----------------
       if (text.startsWith("Мій день") || text.length > 150) {
         const raw = text.replace(/^Мій день[:\-]\s*/i, "");
         const gpt = await analyzeDay(raw);
 
         const date = new Date().toISOString().slice(0, 10);
 
+        // 1) Зберегти в Supabase
         await dbSaveDay({
           telegram_id: chatId,
           date,
@@ -85,10 +98,17 @@ export default async function handler(req, res) {
           audio_text: null,
         });
 
+        // 2) Записати в Notion
+        const objects = parseJsonArraySafe(gpt);
+        if (objects.length > 0) {
+          await saveObjectsToNotion(objects, chatId, raw);
+        }
+
         await bot.sendMessage(chatId, `☑️ Збережено!\n\n${gpt}`);
         return res.send("ok");
       }
 
+      // ---------------- МЕНЮ ТАБЛИЦЬ ----------------
       if (text === "📊 Таблиці") {
         await bot.sendMessage(chatId, "Оберіть рік:", {
           reply_markup: {
@@ -102,6 +122,7 @@ export default async function handler(req, res) {
         return res.send("ok");
       }
 
+      // ---------------- ЗВИЧАЙНІ ЗАПИТАННЯ ----------------
       const answer = await askGPT(text);
       await bot.sendMessage(chatId, answer);
       return res.send("ok");
@@ -176,4 +197,16 @@ function genDays(y, m) {
     const dd = String(i + 1).padStart(2, "0");
     return [{ text: dd, callback_data: `day_${y}_${m}_${dd}` }];
   });
+}
+
+// Безпечний парсер JSON, щоб бот не падав, якщо GPT раптом поверне не те
+function parseJsonArraySafe(str) {
+  try {
+    const data = JSON.parse(str);
+    if (Array.isArray(data)) return data;
+    console.warn("analyzeDay result is not array:", data);
+  } catch (e) {
+    console.error("JSON parse error (analyzeDay):", e);
+  }
+  return [];
 }

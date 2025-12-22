@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "@notionhq/client": "2.2.10",
+    "@notionhq/client": "^2.2.10",
     "@supabase/supabase-js": "^2.84.0",
     "exceljs": "4.4.0",
     "node-telegram-bot-api": "0.61.0",
