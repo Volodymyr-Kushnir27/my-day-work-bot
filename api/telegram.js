@@ -3,7 +3,7 @@ import TelegramBot from "node-telegram-bot-api";
 import { askGPT, analyzeDay, transcribeAudio } from "../lib/gpt.js";
 import { dbSaveDay, dbGetByDate } from "../lib/db.js";
 import { createExcelFile } from "../lib/excel.js";
-import { saveObjectsToNotion } from "../lib/db.js";
+import { saveObjectsToNotion } from "../lib/notion.js";
 
 export const config = { runtime: "nodejs" };
 
